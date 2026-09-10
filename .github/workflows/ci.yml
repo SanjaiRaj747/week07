@@ -1,12 +1,22 @@
 # =========================================================
-# SIT722 - Task 7.1P : Continuous Integration with GitHub Actions
+# SIT722 - Task 7.2C : Extending the CI Testing
 #
 # CI Pipeline for the KoalaTech University microservices application.
 #
 #   Job 1  backend-test    -> runs pytest for all 5 backend services against
 #                             a real PostgreSQL 16 service container
-#   Job 2  build-and-push  -> builds the 6 Docker images and pushes them to
-#                             Azure Container Registry (only if Job 1 passed)
+#   Job 2  frontend-test   -> runs the Vitest suite for the React frontend
+#                             (ADDED IN TASK 7.2C)
+#   Job 3  build-and-push  -> builds the 6 Docker images and pushes them to
+#                             Azure Container Registry (only if Jobs 1 AND 2
+#                             both passed)
+#
+# TASK 7.2C CHANGE:
+#   Task 7.1P tested only the five FastAPI backend services. The frontend was
+#   built and pushed to ACR without a single test ever running against it.
+#   This file closes that gap by adding a `frontend-test` job and listing it
+#   in the `needs:` block of `build-and-push`, so a failing frontend test now
+#   blocks the build & push stage exactly like a failing backend test does.
 #
 # NODE 20 DEPRECATION FIX (Task 7.1P requirement):
 #   The original workflow used actions that still run on the Node 20 runtime,
@@ -129,15 +139,84 @@ jobs:
 
 
   # =========================================================
+  # Frontend Tests                    *** ADDED IN TASK 7.2C ***
+  # =========================================================
+  # The frontend is a React 19 + Vite 6 application. Its test suite is
+  # Vitest running in a jsdom environment, with React Testing Library
+  # supplying the render/query helpers. package.json already exposes:
+  #
+  #     "test"     : "vitest"            <- watch mode, never use in CI
+  #     "test:run" : "vitest run"        <- single pass, exits with a code
+  #
+  # CI must use `test:run`. The plain `test` script starts Vitest in watch
+  # mode, which never exits, so the job would hang until the runner timed
+  # out instead of reporting pass or fail.
+  # =========================================================
+  frontend-test:
+    name: Test frontend
+    runs-on: ubuntu-latest
+
+    # src/config/serviceUrls.js validates these five variables at import
+    # time and throws "Missing environment variable: ..." if any is absent.
+    # That module is pulled in by the API client, so without these values
+    # the Login and serviceUrls suites fail before a single assertion runs.
+    # Vite exposes any VITE_-prefixed process variable through
+    # import.meta.env, so setting them here is enough - no .env file needed.
+    # The values are placeholders: every network call in the suite is mocked
+    # with vi.mock(), so nothing is ever actually requested from these URLs.
+    env:
+      VITE_USER_SERVICE_URL: http://localhost:8000
+      VITE_STUDENT_SERVICE_URL: http://localhost:8001
+      VITE_LECTURER_SERVICE_URL: http://localhost:8002
+      VITE_COURSE_SERVICE_URL: http://localhost:8003
+      VITE_ENROLLMENT_SERVICE_URL: http://localhost:8004
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        # setup-node@v4 runs on node20; @v5 is the first Node 24 release,
+        # keeping this job consistent with the Task 7.1P deprecation fix.
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+          # Cache the npm download cache between runs, keyed on the
+          # frontend lockfile, so repeat runs skip re-downloading packages.
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+
+      - name: Run tests
+        working-directory: frontend
+        run: |
+          npm run test:run
+
+
+  # =========================================================
   # Build and Push Docker Images
   # =========================================================
   build-and-push:
     name: Build and Push ${{ matrix.image }}
     runs-on: ubuntu-latest
 
-    # All backend tests must pass before this job starts
+    # THE QUALITY GATE.
+    # Every leg of backend-test AND the frontend-test job must succeed
+    # before any image is built. If either job fails, GitHub marks this
+    # job "skipped" and nothing reaches the registry.
+    #
+    # frontend-test was added to this list in Task 7.2C - previously the
+    # frontend image could be published even though it had never been
+    # tested.
     needs:
       - backend-test
+      - frontend-test
 
     # Build and push when code is pushed to main or manually triggered
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
