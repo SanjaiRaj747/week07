@@ -254,24 +254,30 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      # Registry identity is written in-line rather than read from the
+      # repository variables used in Task 7.1P. The original ACR was deleted
+      # after Task 6.1P, so vars.ACR_NAME / vars.ACR_LOGIN_SERVER still point
+      # at a registry that no longer exists, which is what made run #3 fail
+      # at this step. The replacement registry is sanjaiweek07acr, in
+      # resource group deakinuni (australiaeast).
       - name: Login to Azure Container Registry
         run: |
-          az acr login --name ${{ vars.ACR_NAME }}
+          az acr login --name sanjaiweek07acr
 
       - name: Build Docker image
         run: |
           docker build \
             --platform linux/amd64 \
-            -t ${{ vars.ACR_LOGIN_SERVER }}/${{ matrix.image }}:${{ github.sha }} \
-            -t ${{ vars.ACR_LOGIN_SERVER }}/${{ matrix.image }}:latest \
+            -t sanjaiweek07acr.azurecr.io/${{ matrix.image }}:${{ github.sha }} \
+            -t sanjaiweek07acr.azurecr.io/${{ matrix.image }}:latest \
             ./${{ matrix.service }}
 
       - name: Push Docker image with commit SHA
         run: |
           docker push \
-            ${{ vars.ACR_LOGIN_SERVER }}/${{ matrix.image }}:${{ github.sha }}
+            sanjaiweek07acr.azurecr.io/${{ matrix.image }}:${{ github.sha }}
 
       - name: Push Docker image with latest tag
         run: |
           docker push \
-            ${{ vars.ACR_LOGIN_SERVER }}/${{ matrix.image }}:latest
+            sanjaiweek07acr.azurecr.io/${{ matrix.image }}:latest
